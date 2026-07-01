@@ -2,6 +2,8 @@ import streamlit as st
 import os
 import re
 import csv
+from google import genai
+from google.genai import types
 
 # Set up page configurations for a clean, modern dashboard
 st.set_page_config(
@@ -10,6 +12,13 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# Initialize the Gemini Client securely
+# It automatically picks up the 'GEMINI_API_KEY' from your environment/secrets
+try:
+    client = genai.Client()
+except Exception:
+    client = None
 
 # =====================================================================
 # MODULE 1: DATA PIPELINE ENGINE
@@ -51,7 +60,6 @@ def format_email(computing_id):
 
 @st.cache_data
 def bootstrap_and_load_data():
-    """Reads the CSV file locally using standard Python csv library for deployment stability."""
     source_csv_path = "Lehigh_Instrumentation_Master_List_v2 (1).csv"
     if not os.path.exists(source_csv_path):
         return None, 0
@@ -134,88 +142,121 @@ def bootstrap_and_load_data():
             
     return enriched_database, offline_count
 
-# Load the structured cache database
+# Load the structured data
 db, offline_filtered = bootstrap_and_load_data()
 
 # =====================================================================
-# MODULE 2: GRAPHICAL USER INTERFACE LAYOUT
+# MODULE 2: GRAPHICAL USER INTERFACE NAVIGATION PANELS
 # =====================================================================
 st.title("🔬 Lehigh University Research Instrumentation Concierge")
-st.markdown("Search campus engineering assets, verify analytical capabilities, and route usage requests directly to the correct operational contacts.")
+st.markdown("Verify operational analytical capabilities across university equipment portfolios and coordinate access routing paths.")
 
 if db is None:
     st.error("⚠️ Data file structural pipeline failure. Please bundle `Lehigh_Instrumentation_Master_List_v2 (1).csv` alongside this `app.py` script file.")
 else:
-    # Sidebar status tracking
-    st.sidebar.header("System Status")
-    st.sidebar.info(f"🟢 Active Core Assets: {len(db)}")
-    st.sidebar.warning(f"🔴 Offline Assets Omitted: {offline_filtered}")
-    st.sidebar.markdown("---")
-    st.sidebar.caption("Powered by Pure Python & Streamlit Engine.")
+    # Sidebar layout status
+    st.sidebar.header("Core Infrastructure")
+    st.sidebar.info(f"🟢 Active Assets: {len(db)}")
+    st.sidebar.warning(f"🔴 Offline Filtered: {offline_filtered}")
+    
+    # Create Layout Tabs for the two separate functionalities
+    tab1, tab2 = st.tabs(["🔍 Hardware Directory (Keyword Search)", "🤖 AI Experiment Explorer (Natural Language)"])
+    
+    # -----------------------------------------------------------------
+    # TAB 1: EXACT MATCH DIRECTORY (YOUR ORIGINAL FUNCTIONALITY)
+    # -----------------------------------------------------------------
+    with tab1:
+        st.markdown("### Exact Asset & Keyword Query")
+        query = st.text_input("💬 Enter specific equipment short names, locations, or manager last names:", 
+                             placeholder="e.g., Seismology, Lee Graham, XRD, Confocal Microscope...", key="dir_search")
 
-    # High-impact user entry box
-    query = st.text_input("💬 Ask the Concierge: What equipment or analytical capability are you looking for?", 
-                         placeholder="e.g., Seismology, Lee Graham, XRD, Confocal Microscope...")
-
-    if query:
-        # Match Engine
-        tokens = [t.lower() for t in re.findall(r'\w+', query) if len(t) > 2]
-        matches = []
-        
-        if tokens:
-            for item in db:
-                score = 0
-                blob = item["search_blob"]
-                name_lower = item["instrument_name"].lower()
+        if query:
+            tokens = [t.lower() for t in re.findall(r'\w+', query) if len(t) > 2]
+            matches = []
+            
+            if tokens:
+                for item in db:
+                    score = 0
+                    blob = item["search_blob"]
+                    name_lower = item["instrument_name"].lower()
+                    
+                    for token in tokens:
+                        if token in name_lower:
+                            score += 15
+                        elif token in blob:
+                            score += 5
+                    if score > 0:
+                        matches.append((score, item))
                 
-                for token in tokens:
-                    if token in name_lower:
-                        score += 15
-                    elif token in blob:
-                        score += 5
-                if score > 0:
-                    matches.append((score, item))
-            
-            matches.sort(key=lambda x: x[0], reverse=True)
-            matches = [record for score, record in matches[:10]]
+                matches.sort(key=lambda x: x[0], reverse=True)
+                matches = [record for score, record in matches[:10]]
 
-        # Display Response Elements
-        if not matches:
-            st.info(f"🤖 **Concierge Response:** I found no direct matching instrumentation indices for: \"{query}\" on campus.")
-            st.markdown("""
-            **Suggestions:**
-            - Try searching for common structural short names or broad fields (e.g., **NMR**, **XRD**, **Confocal**).
-            - Double-check spellings or use administrator last names to query facility boundaries.
-            """)
-        else:
-            st.subheader(f"Identified University Asset Records ({len(matches)} matches):")
-            
-            for idx, item in enumerate(matches, 1):
-                # Wrapped inside a clean native card layout block
-                with st.container(border=True):
-                    col1, col2 = st.columns([3, 2])
+            if not matches:
+                st.info(f"🤖 No direct matching instrumentation indices identified for: \"{query}\"")
+            else:
+                for item in matches:
+                    with st.container(border=True):
+                        col1, col2 = st.columns([3, 2])
+                        with col1:
+                            st.markdown(f"### 📍 {item['instrument_name']}")
+                            st.markdown(f"**Department:** {item['department']}")
+                            st.markdown(f"**Location:** {item['location']}")
+                            st.markdown(f"💡 **Capabilities:** {item['capabilities']}")
+                        with col2:
+                            st.markdown("#### Operational Contact Details")
+                            st.markdown(f"👤 **Name:** **{item['contact_person']}**")
+                            st.markdown(f"🏷️ **Role:** *{item['contact_role']}*")
+                            st.markdown(f"✉️ **Email:** [{item['contact_email']}](mailto:{item['contact_email']})")
+                            st.markdown(f"💳 **Billing Index:** `{item['index_account']}`")
+                        if item["accessibility_warning"]:
+                            st.warning("⚠️ **Accessibility Warning:** No active Technical or Faculty Point of Contact is registered for this instrument. The contact provided above is a Financial Manager. The equipment might be locked, offline, or restricted to a specific user group, and may not be accessible for general campus student research.")
+
+    # -----------------------------------------------------------------
+    # TAB 2: AI EXPERIMENT EXPLORER (THE NEW GEMINI SEARCH FUNCTION)
+    # -----------------------------------------------------------------
+    with tab2:
+        st.markdown("### Natural Language Experiment Translation")
+        st.write("Don't know what machine you need? Describe your scientific target, target material, or data requirements below, and Gemini will find matching Lehigh assets.")
+        
+        user_experiment = st.text_area("🔬 Describe your experiment proposal or analytical data goals:", 
+                                       placeholder="e.g., I need to find the chemical elements inside an organic sample without destroying it, or I am trying to map high-speed cell fractionation tags...",
+                                       key="ai_text")
+        
+        if st.button("🚀 Ask Gemini Concierge", type="primary"):
+            if not client:
+                st.error("🔑 Gemini Client Initialization Failure. Please verify your `GEMINI_API_KEY` environment token is set.")
+            elif not user_experiment.strip():
+                st.warning("Please type an experimental summary before running the evaluation agent.")
+            else:
+                with st.spinner("Analyzing laboratory portfolio matrices..."):
+                    # Build contextual reference block out of your script mappings
+                    capabilities_context = "\n".join([f"- Keyword '{k}': {v}" for k, v in CAPABILITY_DICTIONARY.items()])
                     
-                    with col1:
-                        st.markdown(f"### 📍 {item['instrument_name']}")
-                        st.markdown(f"**Department:** {item['department']}")
-                        st.markdown(f"**Location:** {item['location']}")
-                        st.markdown(f"💡 **Capabilities:** {item['capabilities']}")
-                        
-                    with col2:
-                        st.markdown("#### Operational Contact Details")
-                        st.markdown(f"👤 **Name:** **{item['contact_person']}**")
-                        st.markdown(f"🏷️ **Role:** *{item['contact_role']}*")
-                        
-                        # Generate a clickable mailto link for direct emailing
-                        email_addr = item['contact_email']
-                        if "@" in email_addr:
-                            st.markdown(f"✉️ **Email:** [{email_addr}](mailto:{email_addr})")
-                        else:
-                            st.markdown(f"✉️ **Email:** `{email_addr}`")
-                            
-                        st.markdown(f"💳 **Billing Index:** `{item['index_account']}`")
-                        st.markdown(f"🆔 **Asset ID:** `{item['asset_id']}`")
+                    # Programmatic AI Prompt instructing the layout mapping rules
+                    system_instruction = (
+                        "You are the Lehigh University Engineering Core Facility Concierge Bot. "
+                        "Your goal is to parse a student's high-level research proposal and determine if any campus equipment matches their intent. "
+                        "Analyze their request against our active campus capability keywords:\n"
+                        f"{capabilities_context}\n\n"
+                        "CRITICAL OUTPUT INSTRUCTIONS:\n"
+                        "1. If you find a good match, name the category keyword clearly (e.g., 'Raman Spectroscopy', 'AFM', 'NMR') and explain why it fits their experiment.\n"
+                        "2. Provide 2-3 specific instructional next steps for what search strings they should run inside the Directory tab to look up exact lab managers.\n"
+                        "3. If their request is fundamentally outside our campus portfolio capabilities, explicitly state: 'I could not identify an ideal asset fit for this target setup on campus' and suggest alternative general testing methods."
+                    )
                     
-                    # ENFORCE EXPLICIT FINANCIAL WARNING BOX
-                    if item["accessibility_warning"]:
-                        st.warning("⚠️ **Accessibility Warning:** No active Technical or Faculty Point of Contact is registered for this instrument. The contact provided above is a Financial Manager. The equipment might be locked, offline, or restricted to a specific user group, and may not be accessible for general campus student research.")
+                    try:
+                        # Request inference from Gemini 2.5 Flash
+                        response = client.models.generate_content(
+                            model='gemini-2.5-flash',
+                            contents=user_experiment,
+                            config=types.GenerateContentConfig(
+                                system_instruction=system_instruction,
+                                temperature=0.2 # Lower temperature guarantees stricter, evidence-based reasoning
+                            )
+                        )
+                        
+                        st.markdown("### 🤖 Concierge AI Recommendations")
+                        st.info(response.text)
+                        
+                    except Exception as e:
+                        st.error(f"AI Matrix Generation Error: {str(e)}")
