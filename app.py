@@ -60,7 +60,7 @@ def format_email(computing_id):
 
 @st.cache_data
 def bootstrap_and_load_data():
-    source_csv_path = "Lehigh_Instrumentation_Master_List_v2 (1).csv"
+    source_csv_path = "data.csv"
     if not os.path.exists(source_csv_path):
         return None, 0
         
